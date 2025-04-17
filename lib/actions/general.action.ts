@@ -2,9 +2,67 @@
 
 import { generateObject } from "ai";
 import { google } from "@ai-sdk/google";
-
 import { db } from "@/firebase/admin";
 import { feedbackSchema } from "@/constants";
+import { redirect } from "next/navigation";
+
+export async function getInterviewById(id: string): Promise<Interview | null> {
+    const interview = await db.collection("interviews").doc(id).get();
+
+    return interview.data() as Interview | null;
+}
+
+export async function getFeedbackByInterviewId(
+    params: GetFeedbackByInterviewIdParams
+): Promise<Feedback | null> {
+    const { interviewId, userId } = params;
+
+    const querySnapshot = await db
+        .collection("feedback")
+        .where("interviewId", "==", interviewId)
+        .where("userId", "==", userId)
+        .limit(1)
+        .get();
+
+    if (querySnapshot.empty) return null;
+
+    const feedbackDoc = querySnapshot.docs[0];
+    return { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
+}
+
+export async function getLatestInterviews(
+    params: GetLatestInterviewsParams
+): Promise<Interview[] | null> {
+    const { userId, limit = 20 } = params;
+
+    const interviews = await db
+        .collection("interviews")
+        .where("finalized", "==", true)
+        .where("userId", "!=", userId)
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
+
+    return interviews.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+    })) as Interview[];
+}
+
+export async function getInterviewsByUserId(
+    userId: string
+): Promise<Interview[] | null> {
+    const interviews = await db
+        .collection("interviews")
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc")
+        .get();
+
+    return interviews.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+    })) as Interview[];
+}
 
 export async function createFeedback(params: CreateFeedbackParams) {
     const { interviewId, userId, transcript, feedbackId } = params;
@@ -59,67 +117,75 @@ export async function createFeedback(params: CreateFeedbackParams) {
 
         await feedbackRef.set(feedback);
 
-        return { success: true, feedbackId: feedbackRef.id };
+        return {
+            success: true,
+            feedbackId: feedbackRef.id,
+        }
+
     } catch (error) {
-        console.error("Error saving feedback:", error);
+        console.log("Error creating feedback:", error);
         return { success: false };
     }
 }
 
-export async function getInterviewById(id: string): Promise<Interview | null> {
-    const interview = await db.collection("interviews").doc(id).get();
+// export async function retakeInterview({
+//     interviewId,
+//     userId
+// }: RetakeInterviewParams): Promise<void> {
+//     try {
+//         // 1. Get the original interview data
+//         const originalInterview = await db.collection("interviews")
+//             .doc(interviewId)
+//             .get();
 
-    return interview.data() as Interview | null;
-}
+//         if (!originalInterview.exists) {
+//             throw new Error("Original interview not found");
+//         }
 
-export async function getFeedbackByInterviewId(
-    params: GetFeedbackByInterviewIdParams
-): Promise<Feedback | null> {
-    const { interviewId, userId } = params;
+//         const newInterviewRef = await db.collection("interviews").add({
+//             ...originalInterview.data(),
+//             userId,
+//             createdAt: new Date().toISOString(),
+//             status: "in-progress",
+//             previousAttemptId: interviewId, 
+//         });
 
-    const querySnapshot = await db
-        .collection("feedback")
-        .where("interviewId", "==", interviewId)
-        .where("userId", "==", userId)
-        .limit(1)
-        .get();
+//         // 3. Redirect to the new interview
+//         redirect(`/interview/${newInterviewRef.id}`);
 
-    if (querySnapshot.empty) return null;
+//     } catch (error) {
+//         console.error("Failed to retake interview:", error);
+//         redirect("/interviews");
+//     }
+// }
+export async function retakeInterview({
+    interviewId,
+    userId,
+}: {
+    interviewId: string;
+    userId: string;
+}) {
+    try {
+        // 1. Get original interview data
+        const interviewDoc = await db.collection("interviews").doc(interviewId).get();
 
-    const feedbackDoc = querySnapshot.docs[0];
-    return { id: feedbackDoc.id, ...feedbackDoc.data() } as Feedback;
-}
+        if (!interviewDoc.exists) {
+            throw new Error("Original interview not found");
+        }
 
-export async function getLatestInterviews(
-    params: GetLatestInterviewsParams
-): Promise<Interview[] | null> {
-    const { userId, limit = 20 } = params;
+        // 2. Create new interview
+        const newInterviewRef = await db.collection("interviews").add({
+            ...interviewDoc.data(),
+            userId,
+            createdAt: new Date().toISOString(),
+            status: "in-progress",
+            previousAttemptId: interviewId,
+        });
 
-    const interviews = await db
-        .collection("interviews")
-        .orderBy("createdAt", "desc")
-        .where("finalized", "==", true)
-        .where("userId", "!=", userId)
-        .limit(limit)
-        .get();
-
-    return interviews.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-    })) as Interview[];
-}
-
-export async function getInterviewsByUserId(
-    userId: string
-): Promise<Interview[] | null> {
-    const interviews = await db
-        .collection("interviews")
-        .where("userId", "==", userId)
-        .orderBy("createdAt", "desc")
-        .get();
-
-    return interviews.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-    })) as Interview[];
+        // 3. Return new interview ID
+        return { success: true, interviewId: newInterviewRef.id };
+    } catch (error) {
+        console.error("Error in retakeInterview:", error);
+        return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    }
 }

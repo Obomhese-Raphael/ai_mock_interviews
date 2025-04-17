@@ -97,3 +97,8 @@ interface InterviewFormProps {
 interface TechIconProps {
   techStack: string[];
 }
+
+interface RetakeInterviewParams {
+  interviewId: string;
+  userId: string;
+}
